@@ -13,7 +13,7 @@ http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/htt
 				<fixed-frequency />
 			</scheduling-strategy>
 		</zendesk:on-updated-ticket-trigger>
-		<set-variable value="#[%dw 2.0&#10;&#10;import * from dw::core::Binaries&#10;---&#10;&quot;Basic &quot; ++ toBase64(Mule::p('zendesk.user') ++ &quot;/token:&quot; ++ Mule::p('zendesk.token'))]" doc:name="ZD Auth Token" doc:id="97993e33-9e8b-4e8b-bc15-70a9d90aec8c" variableName="zendesk_token"/>
+		<set-variable value="#[%dw 2.0&#10;&#10;import * from dw::core::Binaries&#10;---&#10;&quot;Basic &quot; ++ toBase64(Mule::p('secure::zendesk.user') ++ &quot;/token:&quot; ++ Mule::p('secure::zendesk.token'))]" doc:name="ZD Auth Token" doc:id="97993e33-9e8b-4e8b-bc15-70a9d90aec8c" variableName="zendesk_token"/>
 		<json-logger:logger-scope doc:name="Log Flow" doc:id="9fcced28-436c-4669-9c77-da4dcf2cb1de" configurationRef="JSON_Logger_Config" priority="TRACE" scopeTracePoint="FLOW_LOGIC_SCOPE" category="ab.bis.flows">
 			<ee:transform doc:name="Normalize" doc:id="11d4f285-ee98-4cf9-8ce5-9ac2f861d864" >
 				<ee:message >
@@ -116,8 +116,8 @@ output multipart/form-data
 ---
 {
 	"identifier" : "zd-ds",
-	"client_secret" : "${aws_api.client_secret}",
-	"client_id" : "${aws_api.client_id}"
+	"client_secret" : "${secure::aws_api.client_secret}",
+	"client_id" : "${secure::aws_api.client_id}"
 }]]]></http:headers>
 					</http:request>
 				</when>
