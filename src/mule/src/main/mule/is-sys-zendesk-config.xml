@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:tls="http://www.mulesoft.org/schema/mule/tls" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:zendesk="http://www.mulesoft.org/schema/mule/zendesk"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/zendesk http://www.mulesoft.org/schema/mule/zendesk/current/mule-zendesk.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/tls http://www.mulesoft.org/schema/mule/tls/current/mule-tls.xsd">
+	<configuration-properties doc:name="Application Configuration" doc:id="babc2070-477f-4ad0-afea-6955cc940e5e" file="config/app.yaml" />
+	<configuration-properties doc:name="Zendesk Configuration" doc:id="d4572cab-56dd-45c0-bd0b-b906faf50471" file="config/zendesk.yaml" />
+	<zendesk:config name="Zendesk_Connector_Config" doc:name="Zendesk Connector Config" doc:id="0fe0ae52-1e4c-4478-97d9-170da60b8a3d" >
+		<zendesk:basic-authentication-connection username="${zendesk.user}/token" password="${zendesk.token}" baseUri="https://${zendesk.uri}" />
+	</zendesk:config>
+	<import doc:name="Logging Module Configuration" doc:id="2bad276c-6f9a-4a62-ba08-d8c6d29ca03a" file="is-lib-logging.xml" />
+	<http:request-config name="AWS_UTL_Configuration" doc:name="HTTP Request configuration" doc:id="f35206b9-4681-420e-b0c3-fda97b6a8c99" basePath="/is-aws-utl-api/v1/" >
+		<http:request-connection host="is-aws-utl-api-dev.us-e1.cloudhub.io" protocol="HTTPS"/>
+	</http:request-config>
+	<http:request-config name="ZD_API_Configuration" doc:name="HTTP Request configuration" doc:id="ce6cde6f-717c-4e26-afb0-09f2bc39baf0" >
+		<http:request-connection host="${zendesk.uri}" protocol="HTTPS"/>
+	</http:request-config>
+</mule>

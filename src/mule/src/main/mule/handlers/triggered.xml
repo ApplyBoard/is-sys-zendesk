@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:json-logger="http://www.mulesoft.org/schema/mule/json-logger"
+	xmlns:zendesk="http://www.mulesoft.org/schema/mule/zendesk" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/zendesk http://www.mulesoft.org/schema/mule/zendesk/current/mule-zendesk.xsd
+http://www.mulesoft.org/schema/mule/json-logger http://www.mulesoft.org/schema/mule/json-logger/current/mule-json-logger.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+	<flow name="DS_Ticket_Flow" doc:id="56e2c522-47dc-4585-9c23-0777f541c1b2" initialState="started">
+		<zendesk:on-updated-ticket-trigger doc:name="Existing ticket updated" doc:id="eed88842-fe05-4b4f-867a-095114bec692" config-ref="Zendesk_Connector_Config">
+			<scheduling-strategy >
+				<fixed-frequency />
+			</scheduling-strategy>
+		</zendesk:on-updated-ticket-trigger>
+		<set-variable value="#[%dw 2.0&#10;&#10;import * from dw::core::Binaries&#10;---&#10;&quot;Basic &quot; ++ toBase64(Mule::p('zendesk.user') ++ &quot;/token:&quot; ++ Mule::p('zendesk.token'))]" doc:name="ZD Auth Token" doc:id="97993e33-9e8b-4e8b-bc15-70a9d90aec8c" variableName="zendesk_token"/>
+		<json-logger:logger-scope doc:name="Log Flow" doc:id="9fcced28-436c-4669-9c77-da4dcf2cb1de" configurationRef="JSON_Logger_Config" priority="TRACE" scopeTracePoint="FLOW_LOGIC_SCOPE" category="ab.bis.flows">
+			<ee:transform doc:name="Normalize" doc:id="11d4f285-ee98-4cf9-8ce5-9ac2f861d864" >
+				<ee:message >
+					<ee:set-payload ><![CDATA[%dw 2.0
+
+import * from dw::Runtime
+
+var tags = (payload.tags as Array<String>) map (itm) -> do {
+		var tag = itm splitBy ':'
+		---
+        if ((itm contains ':') and (sizeOf(tag) == 2)) do {
+		    {key:tag[0], value: tag[1]}
+        } else do {
+            {'flag': itm}
+        }
+	}
+	
+var applications = tags reduce (itm, acc=[]) -> do {
+	if (itm.key == 'app') do {
+		var parsedNum = try(() -> itm.value as Number) orElse 0
+		---
+		if (parsedNum > 0) do {
+			acc + parsedNum
+		} else do {
+			acc
+		}
+	} else do {
+		acc
+	}
+}
+---
+{
+	  ticket: payload.id
+	, applications: applications
+	, created_at: payload.created_at as Date
+	, updated_at: payload.updated_at as Date
+	, topic: payload.raw_subject
+	, text: payload.description
+	, status: payload.status
+	, requester_id: payload.requester_id
+	, submitter_id: payload.submitter_id
+	, assignee_id: payload.assignee_id
+	, linked: payload.followup_ids map {
+			ticket_id: $,
+			link_type: "followup"
+		}
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<choice doc:name="Choice" doc:id="c9b37a8b-3310-4a9c-876b-5308c06a2756">
+				<when expression="#[sizeOf(payload.applications) &gt; 0]">
+					<json-logger:logger doc:name="DEBUG:&#xD;Found Update" doc:id="e8cd7f29-b5a8-4772-b452-af17c407a973" config-ref="JSON_Logger_Config" message='#["Detected update for linked ticket " ++ payload.ticket]' category="ab.bis.zd.ds" priority="DEBUG">
+						<json-logger:content ><![CDATA[#[payload]]]></json-logger:content>
+					</json-logger:logger>
+					<flow-ref doc:name="Expand Data" doc:id="f50c524a-877c-4a9f-be8c-cb2fe691ae53" name="zd-expansion"/>
+					<http:request method="POST" doc:name="POST to AWS Util" doc:id="3b56605f-2045-454f-88ee-d74d47dd8e73" config-ref="AWS_UTL_Configuration" path="/s3/upload">
+						<http:body ><![CDATA[#[%dw 2.0
+import * from dw::core::Binaries
+var applicationId = vars.payload.application.id
+output multipart/form-data
+---
+{
+  "parts": {
+    "file": {
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "content": payload
+    },
+    "region": {
+      "headers": {
+        "Content-Disposition": {
+          "name": "region",
+          "subtype": "form-data"
+        }
+      },
+      "content": "us-east-1"
+    },
+    "bucket_name": {
+      "headers": {
+        "Content-Disposition": {
+          "name": "bucket_name",
+          "subtype": "form-data"
+        }
+      },
+      "content": "mulesoft-s3bucket-general"
+    },
+    "key": {
+      "headers": {
+        "Content-Disposition": {
+          "name": "key",
+          "subtype": "form-data"
+        }
+      },
+      "content": "zd-ds/" ++ payload.ticket ++ ".json"
+    }
+  }
+}]]]></http:body>
+						<http:headers ><![CDATA[#[output application/java
+---
+{
+	"identifier" : "zd-ds",
+	"client_secret" : "${aws_api.client_secret}",
+	"client_id" : "${aws_api.client_id}"
+}]]]></http:headers>
+					</http:request>
+				</when>
+				<otherwise >
+					<json-logger:logger doc:name="TRACE:&#xD;Skip Update" doc:id="c461ab49-c11f-436e-800c-4d380307500d" config-ref="JSON_Logger_Config" message='#["No linked applications -- skipping update for ticket " ++ payload.ticket]' category="ab.bis.zd.ds" priority="TRACE">
+					</json-logger:logger>
+				</otherwise>
+		</choice>
+		</json-logger:logger-scope>
+	</flow>
+	<sub-flow name="zd-expansion" doc:id="3e89f31a-586b-46de-bc0e-cb88427cadb0" >
+		<set-variable value="#[payload]" doc:name="Cache Payload" doc:id="de3684b7-40a5-4233-9350-6db37d4f05d2" variableName="cache"/>
+		<scatter-gather doc:name="Scatter-Gather" doc:id="34fd04f9-1abc-4f5d-958a-933be31679d8" >
+			<route >
+				<set-payload value="#[{ticketId: payload.ticket}]" doc:name="Ticket" doc:id="7c00f68f-de19-4cbc-bb47-ae999d90de3f" />
+				<flow-ref doc:name="Retrieve Comments" doc:id="c3393bdd-5221-4348-b2d6-d1a2bdc76baa" name="zd-retrieve_comments" />
+			</route>
+			<route >
+				<set-payload value="#[{userId: payload.requester_id}]" doc:name="Requesting User" doc:id="d9d14b69-1d77-47ed-a948-cdb85c7e6f2a" />
+				<flow-ref doc:name="Retrieve User" doc:id="4c4362e1-ee8a-4b05-82e1-058e4a5c9274" name="zd-retrieve_user"/>
+			</route>
+			<route >
+				<set-payload value="#[{userId: payload.assignee_id}]" doc:name="Assigned User" doc:id="63a53e74-4176-415c-af4c-a7f9b69e1fb6" />
+				<flow-ref doc:name="Retrieve User" doc:id="23a4248b-f7a7-419f-93a6-1728f7c9b45d" name="zd-retrieve_user"/>
+			</route>
+		</scatter-gather>
+		<ee:transform doc:name="Combine" doc:id="b5d3598c-c7eb-4e12-82ad-de7f987b5d6e" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+
+output java
+---
+vars.cache update {
+	case .comments! -> payload['0'].payload
+	case .author! -> payload['1'].payload
+	case .assignee! -> payload['2'].payload
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</sub-flow>
+	<sub-flow name="zd-retrieve_user" doc:id="78866106-9367-4e4a-b119-95c447d93f3b">
+		<set-variable value="#[null]" doc:name="HTTP Result" doc:id="1cd1b2da-67fc-42c5-9533-694b50259633" variableName="httpResult"/>
+		<choice doc:name="Choice" doc:id="570ba5de-1340-43f7-bdb4-73d6e742d179" >
+			<when expression="#[null != payload.userId]">
+				<try doc:name="Try" doc:id="76b65606-4e6c-439c-b393-7b361c08989e">
+			<http:request method="GET" doc:name="ZD Retrieve User" doc:id="abe61760-fc0e-432a-b8c7-cd18010b5ff0" config-ref="ZD_API_Configuration" path='#["/api/v2/users/" ++ payload.userId ++ ".json"]' target="httpResult">
+			<http:headers><![CDATA[#[output application/java
+---
+{
+	"Authorization" : vars.zendesk_token
+}]]]></http:headers>
+		</http:request>
+			<ee:transform doc:name="Normalize" doc:id="819536e3-8677-4b80-9fd9-5bb0bc8eb028">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.httpResult.user.name]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+			<error-handler>
+				<on-error-continue enableNotifications="false" logException="true" doc:name="OEC - Any" doc:id="9591b702-d766-4c13-9e0b-3249891e68f9">
+					<set-payload value="#[payload.userId]" doc:name="User ID" doc:id="238338b8-b339-46a1-9925-773ef1b4a116" />
+				</on-error-continue>
+			</error-handler>
+		</try>
+			</when>
+			<otherwise >
+				<set-payload value="None" doc:name='"None"' doc:id="2d0b03b0-d94f-4cbf-92fd-262f63004d34" />
+			</otherwise>
+		</choice>
+		<remove-variable doc:name="HTTP Result" doc:id="3a44e946-c7d2-4d48-b8d8-6785096b8550" variableName="httpResult"/>
+	</sub-flow>
+	<sub-flow name="zd-retrieve_comments" doc:id="23268283-b105-4161-8dc9-8a5944c41da1" >
+		<set-variable value="#[null]" doc:name="HTTP Result" doc:id="03b3f162-6b52-4c87-9802-bd595bd78e52" variableName="httpResult"/>
+		<try doc:name="Try" doc:id="6ce65a96-7be6-4f77-99a9-1cb925f80c90" >
+			<http:request method="GET" doc:name="ZD Ticket Comments" doc:id="cb5815b4-7009-40c9-be1e-40cd67f65cb2" config-ref="ZD_API_Configuration" path='#["/api/v2/tickets/" ++ payload.ticketId ++ "/comments.json"]' target="httpResult">
+			<http:headers><![CDATA[#[output application/java
+---
+{
+	"Authorization" : vars.zendesk_token
+}]]]></http:headers>
+		</http:request>
+			<ee:transform doc:name="Normalize" doc:id="661fa9cd-06c6-45c3-b8af-12c43d57e7d3">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.httpResult.comments map {
+	author_id: $.author_id,
+	body: $.plain_body,
+	created_at: $.created_at
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+			<error-handler >
+				<on-error-continue enableNotifications="true" logException="true" doc:name="OEC - Any" doc:id="92193a8e-1fbb-49fd-a7e1-893b48264302" >
+					<set-payload value="Error" doc:name='"Error"' doc:id="4eaf4cc5-3ed3-44ab-bcc6-d3b5e6cd9abe" />
+				</on-error-continue>
+			</error-handler>
+		</try>
+		<remove-variable doc:name="HTTP Result" doc:id="ad73c3ba-b159-4dd1-916e-8211943ea5e2" variableName="httpResult"/>
+	</sub-flow>
+</mule>
